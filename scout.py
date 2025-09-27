@@ -1,28 +1,20 @@
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+# pip install pywin32 docx2python
+import win32com.client as win32
+from docx2python import docx2python
+from pathlib import Path
 
-MODEL_ID = "meta-llama/Llama-4-Scout-17B-16E-Instruct"  # adjust to your exact repo
+pdf_path = Path(r"C:\path\in.pdf")
+docx_path = pdf_path.with_suffix(".docx")
 
-bnb = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_compute_dtype=torch.bfloat16,
-    bnb_4bit_use_double_quant=True,
-)
+# Convert PDF -> DOCX using Microsoft Word
+word = win32.Dispatch("Word.Application")
+word.Visible = False
+doc = word.Documents.Open(str(pdf_path))
+doc.SaveAs(str(docx_path), FileFormat=16)  # 16 = wdFormatDocumentDefault (.docx)
+doc.Close(False)
+word.Quit()
 
-# Optional: cap per-GPU to help HF balance layers
-max_memory = {0: "78GiB", 1: "78GiB"}
-
-tok = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    trust_remote_code=True,
-    quantization_config=bnb,
-    device_map="auto",          # or use `max_memory=max_memory, device_map="auto"`
-    low_cpu_mem_usage=True,
-)
-
-prompt = "Summarize why MoE models inflate VRAM even in 4-bit."
-inputs = tok(prompt, return_tensors="pt").to(model.device)
-out = model.generate(**inputs, max_new_tokens=256)
-print(tok.decode(out[0], skip_special_tokens=True))
+# Extract text (docx2python gets paragraphs, tables, headers/footers, some textboxes)
+with docx2python(str(docx_path)) as docx_content:
+    text = "\n".join(docx_content.text)  # flat text
+print(text[:1000])
