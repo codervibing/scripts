@@ -1,3 +1,20 @@
+def ask_question(question: str, context: str) -> str:
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant that answers questions based only on the provided OCR text."},
+        {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}\nAnswer concisely."},
+    ]
+    text_inputs = processor.apply_chat_template(messages, add_generation_prompt=True)
+    inputs = processor(text=[text_inputs], return_tensors="pt", padding=True).to("cuda", dtype=torch.bfloat16)
+
+    with torch.inference_mode():
+        output = model.generate(**inputs, max_new_tokens=512, temperature=0.0)
+    return processor.batch_decode(output, skip_special_tokens=True)[0]
+
+# Example multi-turn
+print(ask_question("What company name appears in the header?", context_text))
+print(ask_question("List all dates mentioned.", context_text))
+print(ask_question("Summarize this page in 3 sentences.", context_text))
+
 # pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 # pip install transformers bitsandbytes accelerate pillow numpy opencv-python
 
