@@ -1,20 +1,11 @@
-# pip install pywin32 docx2python
-import win32com.client as win32
-from docx2python import docx2python
-from pathlib import Path
+from vllm import LLM, SamplingParams
 
-pdf_path = Path(r"C:\path\in.pdf")
-docx_path = pdf_path.with_suffix(".docx")
-
-# Convert PDF -> DOCX using Microsoft Word
-word = win32.Dispatch("Word.Application")
-word.Visible = False
-doc = word.Documents.Open(str(pdf_path))
-doc.SaveAs(str(docx_path), FileFormat=16)  # 16 = wdFormatDocumentDefault (.docx)
-doc.Close(False)
-word.Quit()
-
-# Extract text (docx2python gets paragraphs, tables, headers/footers, some textboxes)
-with docx2python(str(docx_path)) as docx_content:
-    text = "\n".join(docx_content.text)  # flat text
-print(text[:1000])
+llm = LLM(model="meta-llama/Llama-3.2-11B-Vision-Instruct", trust_remote_code=True)
+prompts = [{
+  "prompt": [
+    {"type": "text", "text": "Summarize the image."},
+    {"type": "image", "image_url": "file:///abs/path/to/image.jpg"}
+  ]
+}]
+out = llm.generate(prompts, SamplingParams(max_tokens=128, temperature=0))
+print(out[0].outputs[0].text)
