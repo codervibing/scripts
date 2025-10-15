@@ -1,134 +1,210 @@
-import os, json, tempfile, math, shutil
-import multiprocessing as mp
-from pathlib import Path
-import fitz  # PyMuPDF
+import re
+import argparse
+from typing import List, Optional, Tuple
+import pandas as pd
+from rapidfuzz import process, fuzz
+from sentence_transformers import SentenceTransformer, util
+import torch
 
-# ---------- CONFIG ----------
-DPI = 180
-BATCH_SIZE = 8           # per worker loop batch (EasyOCR has no true batch; keep >1 for IO overlap)
-LANGS = ['en']           # adjust
-USE_GPU = True
-# ----------------------------
+# ---------- Config ----------
+PARENT_COL = "Parent Group"          # exact column name for parent list
+INVESTOR_COL = "Investor Name"       # exact column name for investor names
+OUTPUT_COL = "Predicted_Parent"
+CONF_COL = "Confidence"
+METHOD_COL = "Method"
+FUZZY_COL = "Fuzzy_Score"
+EMB_COL = "Embed_Score"
+REVIEW_COL = "Needs_Review"
 
-def pre_render_pages(pdf_path, page_indices, out_dir, dpi=DPI):
-    """Render selected pages to PNG once; return [(page_idx, png_path), ...]."""
-    out = []
-    doc = fitz.open(pdf_path)
-    try:
-        zoom = dpi / 72.0
-        mat = fitz.Matrix(zoom, zoom)
-        for i in page_indices:
-            page = doc.load_page(i)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            p = Path(out_dir) / f"page_{i:06d}.png"
-            pix.save(p.as_posix())
-            out.append((i, p.as_posix()))
-    finally:
-        doc.close()
-    return out
+# Common corporate suffixes / noise tokens to strip during normalization
+SUFFIXES = [
+    r"\blimited\b", r"\bltd\b", r"\bplc\b", r"\bllc\b", r"\bllp\b", r"\binc\b", r"\bco\b", r"\bcorp\b",
+    r"\bsa\b", r"\bs\.a\.\b", r"\bsicav\b", r"\bse\b", r"\bag\b", r"\bspa\b", r"\bgmbh\b", r"\bsarl\b",
+    r"\bpte\b", r"\bpte\.?\s+ltd\b", r"\bholdings?\b", r"\basset\s+management\b", r"\basset\s+mgt\b",
+    r"\bgroup\b", r"\binternational\b", r"\bglobal\b", r"\bpartners?\b", r"\binvestments?\b", r"\bmanagement\b",
+    r"\bmanagers?\b", r"\badvisors?\b", r"\bcapital\b", r"\bservices?\b", r"\btrust\b", r"\bbank\b"
+]
+SUFFIX_PATTERN = re.compile("|".join(SUFFIXES), flags=re.IGNORECASE)
 
-def split_even(items, n):
-    """Split list into n near-equal chunks."""
-    k = math.ceil(len(items) / n) if n > 0 else 0
-    return [items[i:i+k] for i in range(0, len(items), k)]
+# Optional: quick keyword rules for dead-simple high-precision hits
+# Extend freely: {"Parent Name": ["aliases", "tickers", "common abbreviations", ...]}
+RULES = {
+    "BlackRock": ["blackrock", "ishares", "br iic"],
+    "Goldman Sachs": ["gs", "gsam", "goldman"],
+    "Morgan Stanley": ["ms", "msim", "morgan stanley"],
+    "J.P. Morgan": ["jpm", "jpmorgan", "jp morgan", "jp morgan"],
+    "UBS": ["ubs", "ubs am"],
+    "Amundi": ["amundi", "cppr amundi"],
+    "Vanguard": ["vanguard", "vgi"],
+}
 
-def worker_easyocr(gpu_id, items, out_json_path):
+# ---------- Helpers ----------
+def normalize(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    t = text.lower()
+    t = re.sub(r"[&/.,\-()’'`]", " ", t)           # punctuation -> space
+    t = SUFFIX_PATTERN.sub(" ", t)                  # remove suffixes/noise
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+def rule_based_match(investor_norm: str, parent_names: List[str]) -> Optional[str]:
+    # Check RULES by substring contains
+    for parent in parent_names:
+        aliases = RULES.get(parent, [])
+        for alias in aliases:
+            if alias in investor_norm:
+                return parent
+    return None
+
+def fuzzy_best(investor: str, parents: List[str]) -> Tuple[Optional[str], int]:
+    if not parents:
+        return None, 0
+    match = process.extractOne(
+        investor,
+        parents,
+        scorer=fuzz.token_set_ratio
+    )
+    if match:
+        name, score, _ = match
+        return name, int(score)
+    return None, 0
+
+def embed_best(investor: str, parent_list: List[str], model: SentenceTransformer, parent_emb: torch.Tensor) -> Tuple[Optional[str], float]:
+    if not parent_list:
+        return None, 0.0
+    inv_emb = model.encode([investor], convert_to_tensor=True, normalize_embeddings=True)
+    # cosine similarities (normalized) -> [-1,1], but here ~[0,1]
+    sims = (inv_emb @ parent_emb.T)[0]
+    idx = int(torch.argmax(sims).item())
+    return parent_list[idx], float(sims[idx].item())
+
+def combine_confidence(fuzzy_score: int, emb_score: float) -> int:
     """
-    items: list[(page_idx, image_path)]
-    Writes {page_idx: {"text": "...", "boxes": [[x1,y1,x2,y2,...], ...]}} to out_json_path
+    Combine RapidFuzz 0..100 and embedding cosine 0..1 -> 0..100.
+    Simple weighted blend (tuneable).
     """
-    # Set GPU visibility BEFORE importing heavy libs in this process
-    if USE_GPU:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    emb_pct = emb_score * 100.0
+    # Heavier weight to embeddings (often better for abbreviations), but keep fuzzy too
+    combined = 0.6 * emb_pct + 0.4 * fuzzy_score
+    return int(round(combined))
+
+def decide_label(
+    inv_raw: str,
+    inv_norm: str,
+    parents_unique: List[str],
+    model: SentenceTransformer,
+    parent_emb: torch.Tensor,
+    high_conf: int = 85,
+    med_conf: int = 70
+):
+    # 1) Rules first (high precision)
+    rule_parent = rule_based_match(inv_norm, parents_unique)
+    if rule_parent:
+        # Give strong confidence if also supported by fuzzy/emb
+        f_name, f_score = fuzzy_best(inv_raw, parents_unique)
+        e_name, e_score = embed_best(inv_norm, parents_unique, model, parent_emb)
+        conf = combine_confidence(f_score, e_score) if (f_name == rule_parent or e_name == rule_parent) else 90
+        return rule_parent, conf, "rule+fusion", f_score, e_score
+
+    # 2) Fuzzy
+    f_name, f_score = fuzzy_best(inv_raw, parents_unique)
+
+    # 3) Embeddings (use normalized strings for semantic cue)
+    e_name, e_score = embed_best(inv_norm, parents_unique, model, parent_emb)
+
+    # 4) Combine / choose best
+    conf = combine_confidence(f_score, e_score)
+    # Prefer the name that appears most supported. If they disagree, pick by higher individual signal.
+    if f_name == e_name:
+        chosen = f_name
+        method = "fuzzy+embed"
     else:
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        # Compare normalized signals
+        if (f_score >= 92 and e_score < 0.55):   # very strong fuzzy, weak embed
+            chosen, method = f_name, "fuzzy"
+        elif (e_score >= 0.70 and f_score < 75): # strong embed, meh fuzzy
+            chosen, method = e_name, "embed"
+        else:
+            # fall back to best confidence overall
+            chosen = e_name if (e_score*100) >= f_score else f_name
+            method = "blend"
 
-    # Import here so it respects CUDA_VISIBLE_DEVICES for this subprocess
-    import easyocr
+    # Confidence thresholds can flag review later
+    return chosen, conf, method, f_score, e_score
 
-    reader = easyocr.Reader(LANGS, gpu=USE_GPU)  # load once per process
+def main():
+    ap = argparse.ArgumentParser(description="Map Investor Names to Parent Groups.")
+    ap.add_argument("--input", required=True, help="Path to input Excel (.xlsx)")
+    ap.add_argument("--output", required=True, help="Path to output Excel (.xlsx)")
+    ap.add_argument("--sheet", default=0, help="Sheet name or index for input")
+    ap.add_argument("--parent-col", default=PARENT_COL, help="Column name for Parent Group")
+    ap.add_argument("--investor-col", default=INVESTOR_COL, help="Column name for Investor Name")
+    ap.add_argument("--high-conf", type=int, default=85, help="Confidence >= this -> no review")
+    ap.add_argument("--med-conf", type=int, default=70, help="Confidence < high and >= med -> review only if it disagrees with existing parent")
+    args = ap.parse_args()
 
-    results = {}
-    # Process in small batches to amortize overhead
-    for start in range(0, len(items), BATCH_SIZE):
-        batch = items[start:start+BATCH_SIZE]
-        for page_idx, img_path in batch:
-            det = reader.readtext(img_path, detail=1, paragraph=True)
-            # det: list of (bbox, text, conf)
-            lines = []
-            boxes = []
-            for bbox, txt, conf in det:
-                if txt is None or txt.strip() == "":
-                    continue
-                lines.append(txt.strip())
-                # flatten bbox
-                flat = [float(v) for pt in bbox for v in pt]
-                boxes.append(flat)
-            results[page_idx] = {
-                "text": "\n".join(lines),
-                "boxes": boxes
-            }
+    df = pd.read_excel(args.input, sheet_name=args.sheet)
+    if args.parent_col not in df.columns or args.investor_col not in df.columns:
+        raise ValueError(f"Input must contain columns '{args.investor_col}' and '{args.parent_col}'")
 
-    with open(out_json_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False)
+    # Unique parent list (as raw + normalized sidecar)
+    parents_raw = [p for p in df[args.parent_col].dropna().astype(str).unique().tolist()]
+    parents_norm = [normalize(p) for p in parents_raw]
 
-def run_multi_gpu_ocr(pdf_path, page_indices=None, num_gpus=1, tmp_root=None):
-    """
-    Returns dict: {page_idx: {...}} merged from all workers.
-    """
-    if page_indices is None:
-        # 0-based indices
-        with fitz.open(pdf_path) as d:
-            page_indices = list(range(len(d)))
+    # Load embeddings once
+    model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+    parent_emb = model.encode(parents_norm, convert_to_tensor=True, normalize_embeddings=True)
 
-    # Temp workspace
-    workdir = Path(tmp_root or tempfile.mkdtemp(prefix="ocr_run_"))
-    img_dir = workdir / "imgs"
-    img_dir.mkdir(parents=True, exist_ok=True)
+    # Prepare outputs
+    preds, confs, methods, fzs, embs = [], [], [], [], []
 
-    # 1) Pre-render once
-    items = pre_render_pages(pdf_path, page_indices, img_dir)
+    for inv in df[args.investor_col].astype(str).fillna(""):
+        inv_norm = normalize(inv)
+        parent, conf, method, fz, em = decide_label(
+            inv_raw=inv,
+            inv_norm=inv_norm,
+            parents_unique=parents_raw,
+            model=model,
+            parent_emb=parent_emb,
+            high_conf=args.high_conf,
+            med_conf=args.med_conf
+        )
+        preds.append(parent)
+        confs.append(conf)
+        methods.append(method)
+        fzs.append(fz)
+        embs.append(round(em, 4))
 
-    # 2) Split across GPUs
-    chunks = split_even(items, num_gpus) if num_gpus > 1 else [items]
+    out = df.copy()
+    out[OUTPUT_COL] = preds
+    out[CONF_COL] = confs
+    out[METHOD_COL] = methods
+    out[FUZZY_COL] = fzs
+    out[EMB_COL] = embs
 
-    ctx = mp.get_context("spawn")
-    procs = []
-    json_paths = []
+    # Review logic:
+    # - Confidence < med_conf  -> review
+    # - med_conf <= conf < high_conf -> review if it disagrees with existing parent
+    needs_review = []
+    for pred, conf, existing in zip(out[OUTPUT_COL], out[CONF_COL], out[args.parent_col].astype(str).fillna("")):
+        disagree = (normalize(pred) != normalize(existing)) if existing else True
+        if conf < args.med_conf:
+            needs_review.append(True)
+        elif conf < args.high_conf and disagree:
+            needs_review.append(True)
+        else:
+            needs_review.append(False)
+    out[REVIEW_COL] = needs_review
 
-    for gpu_id, chunk in enumerate(chunks):
-        if not chunk:
-            continue
-        out_json = workdir / f"out_gpu{gpu_id}.json"
-        json_paths.append(out_json)
-        p = ctx.Process(target=worker_easyocr, args=(gpu_id, chunk, out_json.as_posix()))
-        procs.append(p)
+    # Sort: review first
+    out.sort_values(by=[REVIEW_COL, CONF_COL], ascending=[False, True], inplace=True)
 
-    # 3) Start & join
-    for p in procs:
-        p.start()
-    for p in procs:
-        p.join()
-
-    # 4) Merge outputs
-    merged = {}
-    for jp in json_paths:
-        with open(jp, "r", encoding="utf-8") as f:
-            part = json.load(f)
-            merged.update({int(k): v for k, v in part.items()})
-
-    # Optional: cleanup workspace
-    shutil.rmtree(workdir, ignore_errors=True)
-
-    return dict(sorted(merged.items(), key=lambda kv: kv[0]))
-
-# ----------------- Example usage -----------------
+    # Save
+    out.to_excel(args.output, index=False)
+    print(f"Done. Wrote {args.output}")
+    print(f"Rows flagged for review: {sum(needs_review)} / {len(out)}")
+    print("Tip: Inspect low-confidence rows and extend RULES for frequent subsidiaries.")
+    
 if __name__ == "__main__":
-    PDF = "/path/to/your.pdf"
-    NUM_GPUS = 4              # set to your available GPUs
-    # Example: run all pages
-    out = run_multi_gpu_ocr(PDF, page_indices=None, num_gpus=NUM_GPUS)
-    # `out` is {page_index: {"text": "...", "boxes": [...]}}
-    # Persist if needed:
-    with open("ocr_result.json", "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False, indent=2)
+    main()
