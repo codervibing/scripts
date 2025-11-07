@@ -1,9 +1,8 @@
-import re
-
-HEADERS = ["Answer", "Reasoning", "SourceRef"]
-
 def extract_sections(text: str):
-    # scope to model output after "Assistant:"
+    import re
+    HEADERS = ["Answer", "Reasoning", "SourceRef"]
+
+    # Trim to model output
     m = re.search(r'Assistant\s*:\s*', text, flags=re.IGNORECASE)
     if m:
         text = text[m.end():]
@@ -22,10 +21,16 @@ def extract_sections(text: str):
             if val and "<your" not in val.lower():
                 out[h] = val
 
-    # tighten SourceRef to last line ending with ")"
+    # Cleanup for SourceRef
     if "SourceRef" in out:
         lines = [ln.strip() for ln in out["SourceRef"].splitlines() if ln.strip()]
         tail = [ln for ln in lines if ln.endswith(")")]
         out["SourceRef"] = tail[-1] if tail else (lines[-1] if lines else "")
 
-    return out
+    # Combine dynamically
+    combined = []
+    for h in HEADERS:
+        if h in out:
+            combined.append(f"{h}: {out[h]}")
+
+    return "\n\n".join(combined)
