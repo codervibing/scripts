@@ -1,75 +1,36 @@
- 
-Below is a resource, cost, and efficiency matrix for each function in a chatbot that handles structured (SQL) + unstructured (text/PDF) data.
-Numbers assume small production scale (≈10 k documents, <50 queries/min).
+Here’s the combined table — team structure plus steady-state workflow.
 
 ⸻
 
-1. Compute categories
+Team Composition and Responsibilities
 
-Layer	Purpose	Typical Hardware	Monthly cost (self-host est.)	Notes
-LLM Inference	Generate/chat responses	1 × A100 / 4090 GPU	£700–£1000	Heavy cost driver. Replaceable by Orchestra API or Ollama/vLLM.
-Embeddings + Rerankers	Vector creation + reranking	CPU ok / 1 × small GPU	£50–£200	Infrequent, cheaper to run in-house.
-Vector Store	FAISS/Milvus	CPU RAM 16–32 GB	£20–£80	Cheap; no reason to outsource.
-SQL DB	Structured data	MS SQL existing	sunk	Already owned.
-Cache/Session	Redis	2 vCPU / 4 GB	£10–£30	Required either way.
-API Layer	FastAPI + NGINX	4 vCPU / 8 GB	£20–£50	Lightweight.
-Object Storage	MinIO / S3	200 GB	£5–£20	Cheap.
-Monitoring + Traces	Prometheus + Grafana + Langfuse	2 vCPU	£10–£30	Optional.
-
-
-⸻
-
-2. Build vs Orchestra API
-
-Capability	Orchestra API	In-house (open-source)	Trade-off
-Chat / LLM Inference	/chat (pay-per-token)	Ollama + vLLM (own GPU)	API cheaper at low traffic; GPU cheaper beyond ≈5 M tokens/month.
-Structured Querying	/query	Text-to-SQL model (SQLCoder / Phi-4)	API convenient but opaque; in-house gives schema control + safety.
-Document Upload / Storage	/document/upload	MinIO + FAISS ingestion	Orchestra stores docs for you but limits control; in-house cheaper at volume.
-Conversation State	/conversation/*	Redis + Postgres table	Orchestra ok for short-term memory; in-house required for multi-user sessions.
-Agents / Workflow	/agent	LangGraph / Haystack Agents	Orchestra faster to prototype; local agents cheaper, fully controllable.
-Auth / Session	/session/login	FastAPI + JWT / Keycloak	Use your own if app has multiple user roles or SSO.
-Embedding API	/embed	sentence-transformers	Self-host saves cost, identical quality.
+Role	Core Responsibilities	Steady-State Workload	Notes
+Quant (Lead Architect)	System design, retrieval metrics, latency and cost optimisation, SQL/RAG logic	~20–30% ongoing	Oversees architecture, validates technical trade-offs, manages scaling decisions
+Data Scientist 1	LLM prompt engineering, agent logic, evaluation scripts	Full-time	Owns /chat and /agent behaviour tuning
+Data Scientist 2	Embedding pipeline, vector quality analysis, retrieval QA	Full-time	Monitors recall@k, chunking efficiency
+Data Scientist 3	Model evaluation, drift detection, benchmarking	Full-time	Maintains validation datasets and regression tests
+Senior Software Engineer	Backend orchestration, FastAPI/Redis/MS SQL integration, deployment automation	Full-time	Responsible for reliability, scaling, and CI/CD
+Junior Software Engineer 1	API endpoints, file ingestion, Redis vector operations	Full-time	Implements weekly ETL + embedding jobs
+Junior Software Engineer 2	Frontend/chat UI, integration testing	Full-time	Maintains user interface and API client layer
+Junior Software Engineer 3	Monitoring, logging, and observability dashboards	Full-time	Prometheus, Grafana, Langfuse setup
 
 
 ⸻
 
-3. Cost–control guidelines
+Steady-State Operational Workflow
 
-Component	Keep API	Move in-house	Reason
-LLM Chat (core reasoning)	✅ until traffic justifies GPU	⬆ when token spend >£600/mo	Break-even point.
-Embeddings	❌	✅	CPU-cheap; avoid pay-per-call.
-Vector Store	❌	✅	Local FAISS faster + private.
-Agent logic	❌	✅	Open-source flexible, cost-free per call.
-Document ops	❌	✅	Storage bandwidth cheaper locally.
-SQL access	✅ for prototyping	✅ for prod	Need schema control.
-Session mgmt	❌	✅	Must link to your auth.
+Area	Example Activities	Frequency
+Data Ingestion & Embedding	Weekly ETL → clean → chunk → embed → upsert to Redis Vector	Weekly
+Model Management	Review new checkpoints, test updated LLMs, adjust prompt templates	Monthly / Quarterly
+Retrieval QA	Measure recall@k, inspect failure cases, tune chunk sizes	Weekly
+SQL Pipeline Validation	Verify schema changes, run safe-query tests on text-to-SQL logic	Weekly
+System Monitoring	Track latency, token usage, GPU load, and error rates	Daily
+Logs & Metrics Review	Aggregate Prometheus and Langfuse data, build trend dashboards	Continuous
+Maintenance Tasks	Rotate secrets, clean Redis caches, backup data stores	Weekly
+User Feedback Loop	Analyse chat logs, collect feedback, refine prompts and routing	Ongoing
 
-
-⸻
-
-4. Suggested configuration for you
-
-Function	Tool	Est. cost/mo	Notes
-LLM host	vLLM + Mistral-7B	£600 GPU	Switch to API if usage <5 M tokens.
-Embeddings	sentence-transformers	£40 CPU	Batch job.
-Vector DB	FAISS	£0	Local.
-SQL	MS SQL	—	Existing infra.
-API	FastAPI	£25	On VM.
-Cache	Redis	£15	Shared.
-Object store	MinIO	£10	200 GB.
-Monitoring	Prometheus + Grafana	£10	Optional.
-
-≈ £700–£750/mo self-host total
-vs.
-≈ £1000–£1300/mo if using Orchestra for all heavy endpoints.
 
 ⸻
 
-5. Efficiency summary
-	•	Cheaper to build in-house once you own 1 GPU.
-	•	APIs faster to deploy if team <2 engineers and workload small.
-	•	Hybrid model works best: keep /chat and /agent API-based while self-hosting vector, embeddings, and SQL.
-
-⸻
-
-If you want, next I can show you a one-page architecture diagram + decision tree (which boxes are Orchestra vs in-house, with break-even thresholds). Would you like that?
+Summary:
+This team can sustain the system post-launch with predictable weekly and monthly routines. Automation of ingestion, monitoring, and retraining allows the project to scale efficiently without additional headcount until volumes or SLA commitments rise substantially.
