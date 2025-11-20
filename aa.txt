@@ -1,36 +1,79 @@
-Here’s the combined table — team structure plus steady-state workflow.
-
-⸻
-
-Team Composition and Responsibilities
-
-Role	Core Responsibilities	Steady-State Workload	Notes
-Quant (Lead Architect)	System design, retrieval metrics, latency and cost optimisation, SQL/RAG logic	~20–30% ongoing	Oversees architecture, validates technical trade-offs, manages scaling decisions
-Data Scientist 1	LLM prompt engineering, agent logic, evaluation scripts	Full-time	Owns /chat and /agent behaviour tuning
-Data Scientist 2	Embedding pipeline, vector quality analysis, retrieval QA	Full-time	Monitors recall@k, chunking efficiency
-Data Scientist 3	Model evaluation, drift detection, benchmarking	Full-time	Maintains validation datasets and regression tests
-Senior Software Engineer	Backend orchestration, FastAPI/Redis/MS SQL integration, deployment automation	Full-time	Responsible for reliability, scaling, and CI/CD
-Junior Software Engineer 1	API endpoints, file ingestion, Redis vector operations	Full-time	Implements weekly ETL + embedding jobs
-Junior Software Engineer 2	Frontend/chat UI, integration testing	Full-time	Maintains user interface and API client layer
-Junior Software Engineer 3	Monitoring, logging, and observability dashboards	Full-time	Prometheus, Grafana, Langfuse setup
-
-
-⸻
-
-Steady-State Operational Workflow
-
-Area	Example Activities	Frequency
-Data Ingestion & Embedding	Weekly ETL → clean → chunk → embed → upsert to Redis Vector	Weekly
-Model Management	Review new checkpoints, test updated LLMs, adjust prompt templates	Monthly / Quarterly
-Retrieval QA	Measure recall@k, inspect failure cases, tune chunk sizes	Weekly
-SQL Pipeline Validation	Verify schema changes, run safe-query tests on text-to-SQL logic	Weekly
-System Monitoring	Track latency, token usage, GPU load, and error rates	Daily
-Logs & Metrics Review	Aggregate Prometheus and Langfuse data, build trend dashboards	Continuous
-Maintenance Tasks	Rotate secrets, clean Redis caches, backup data stores	Weekly
-User Feedback Loop	Analyse chat logs, collect feedback, refine prompts and routing	Ongoing
-
-
-⸻
-
-Summary:
-This team can sustain the system post-launch with predictable weekly and monthly routines. Automation of ingestion, monitoring, and retraining allows the project to scale efficiently without additional headcount until volumes or SLA commitments rise substantially.
+chatbot-app/
+├── frontend/                     # UI (web/mobile)
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/                # or routes/ if using Next.js/Remix
+│   │   ├── hooks/
+│   │   └── lib/                  # API clients, type defs
+│   └── package.json
+│
+├── backend/
+│   ├── app.py                    # entrypoint (FastAPI/Flask/etc.)
+│   ├── api/                      # HTTP endpoints
+│   │   ├── routes_chat.py        # /chat, /threads, /history
+│   │   ├── routes_admin.py
+│   │   └── deps.py               # shared dependencies (auth, db session)
+│   │
+│   ├── core/                     # cross-cutting concerns
+│   │   ├── config.py             # settings, env loading
+│   │   ├── logging.py
+│   │   ├── exceptions.py
+│   │   └── middleware.py
+│   │
+│   ├── domain/                   # business entities & logic
+│   │   ├── conversations/
+│   │   │   ├── models.py         # Conversation, Message, ToolCall
+│   │   │   └── service.py        # save/load history, transcripts
+│   │   ├── users/
+│   │   └── knowledge/            # documents / collections metadata
+│   │
+│   ├── services/                 # orchestration / high-level flows
+│   │   ├── chat_orchestrator.py  # routes requests to correct agent/pipeline
+│   │   ├── routing_policy.py     # which agent to call when
+│   │   ├── retrieval_service.py  # vector / keyword search abstraction
+│   │   └── analytics_service.py
+│   │
+│   ├── agents/                   # agent definitions (all API-driven)
+│   │   ├── base.py               # BaseAgent, common interface
+│   │   ├── rag_agent.py          # calls LLM + vector DB API
+│   │   ├── sql_agent.py          # calls SQL-proxy API / DB-tool
+│   │   ├── tools_agent.py        # web-search, calculators, etc.
+│   │   └── workflow/             # multi-step/graph agents
+│   │
+│   ├── clients/                  # outbound API clients
+│   │   ├── llm_client.py         # OpenAI/Anthropic/Mistral/etc.
+│   │   ├── embedding_client.py   # embedding/model APIs
+│   │   ├── vector_client.py      # Redis/Weaviate/Pinecone/etc.
+│   │   ├── tools_client.py       # external tools (search, emails, CRMs)
+│   │   └── db_client.py          # SQL/NoSQL if used directly
+│   │
+│   ├── prompts/                  # prompt + system templates
+│   │   ├── chat/
+│   │   ├── agents/
+│   │   └── tools/
+│   │
+│   ├── workers/                  # async/background tasks
+│   │   ├── queue.py              # celery/rq/kafka/other
+│   │   ├── tasks_ingestion.py    # doc ingestion, embedding jobs
+│   │   └── tasks_maintenance.py  # cleanup, metrics
+│   │
+│   ├── tests/
+│   │   ├── test_api/
+│   │   ├── test_agents/
+│   │   └── test_services/
+│   └── requirements.txt
+│
+├── configs/                      # per-env config (non-secret)
+│   ├── dev.yaml
+│   ├── staging.yaml
+│   └── prod.yaml
+│
+├── infra/                        # deployment / ops
+│   ├── docker/
+│   ├── k8s/
+│   └── scripts/
+│
+├── .env.example                  # example secrets layout
+├── README.md
+└── pyproject.toml / setup.cfg
