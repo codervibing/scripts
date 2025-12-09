@@ -1,36 +1,24 @@
-Here’s the combined table — team structure plus steady-state workflow.
+Hi Garvit, team,
 
-⸻
+Thanks for sharing the observations. This is a critical part of the pipeline, so I want to make sure we approach it in a structured and aligned way.
 
-Team Composition and Responsibilities
+Given the complexity and variability in the PPT layouts, I suggest we proceed as follows:
+	1.	PPT Variant Coverage
+@Gupta, Himanshi and @Satish chalak, Rohit — please test a broad range of case study PPT variants using both existing PPTX-based logic and Docling, so we can understand concrete strengths, gaps, and failure modes. I’ll share the scripts and evaluation checklist to standardise this.
+	2.	Granularity in PPT Extraction
+Based on initial observations, PPTs should not be treated as a single unstructured blob. Wherever possible, we should leverage native PPT layers and structure to preserve granularity before considering heavier processing.
+	3.	Knowledge Graph Approach
+On KG, I’m not convinced yet that it adds sufficient value for the current scope. Let’s keep this on hold until we have clear evidence that it materially improves outcomes.
+	4.	Layout-Based Options
+@Nagpal, Garvit — it would be helpful if you could look into layout-aware extraction approaches that are practical within the BofA environment. We can evaluate these once we see results from baseline testing.
+	5.	Parallel Workstreams
+@Ashok, Gadde and @Pandit, Shivansh — please continue with the KG-related exploration as currently guided by @Shivaraju, Madhura. We’ll reassess once the PPT findings are consolidated.
+	6.	Integration & Ownership
+I’ll continue driving the overall ingestion design and integration, and once we have empirical results across PPT variants, I’ll finalise the gating logic and tooling decisions.
 
-Role	Core Responsibilities	Steady-State Workload	Notes
-Quant (Lead Architect)	System design, retrieval metrics, latency and cost optimisation, SQL/RAG logic	~20–30% ongoing	Oversees architecture, validates technical trade-offs, manages scaling decisions
-Data Scientist 1	LLM prompt engineering, agent logic, evaluation scripts	Full-time	Owns /chat and /agent behaviour tuning
-Data Scientist 2	Embedding pipeline, vector quality analysis, retrieval QA	Full-time	Monitors recall@k, chunking efficiency
-Data Scientist 3	Model evaluation, drift detection, benchmarking	Full-time	Maintains validation datasets and regression tests
-Senior Software Engineer	Backend orchestration, FastAPI/Redis/MS SQL integration, deployment automation	Full-time	Responsible for reliability, scaling, and CI/CD
-Junior Software Engineer 1	API endpoints, file ingestion, Redis vector operations	Full-time	Implements weekly ETL + embedding jobs
-Junior Software Engineer 2	Frontend/chat UI, integration testing	Full-time	Maintains user interface and API client layer
-Junior Software Engineer 3	Monitoring, logging, and observability dashboards	Full-time	Prometheus, Grafana, Langfuse setup
+This should give us clarity based on evidence rather than assumptions, while keeping efforts coordinated.
 
+Thanks everyone — let’s sync once the first round of findings is in.
 
-⸻
-
-Steady-State Operational Workflow
-
-Area	Example Activities	Frequency
-Data Ingestion & Embedding	Weekly ETL → clean → chunk → embed → upsert to Redis Vector	Weekly
-Model Management	Review new checkpoints, test updated LLMs, adjust prompt templates	Monthly / Quarterly
-Retrieval QA	Measure recall@k, inspect failure cases, tune chunk sizes	Weekly
-SQL Pipeline Validation	Verify schema changes, run safe-query tests on text-to-SQL logic	Weekly
-System Monitoring	Track latency, token usage, GPU load, and error rates	Daily
-Logs & Metrics Review	Aggregate Prometheus and Langfuse data, build trend dashboards	Continuous
-Maintenance Tasks	Rotate secrets, clean Redis caches, backup data stores	Weekly
-User Feedback Loop	Analyse chat logs, collect feedback, refine prompts and routing	Ongoing
-
-
-⸻
-
-Summary:
-This team can sustain the system post-launch with predictable weekly and monthly routines. Automation of ingestion, monitoring, and retraining allows the project to scale efficiently without additional headcount until volumes or SLA commitments rise substantially.
+Best,
+Abel
