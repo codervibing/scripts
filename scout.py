@@ -1,3 +1,30 @@
+def overlap_ratio_with_canvas(e) -> float:
+    """
+    Returns fraction of the element's area that lies inside the slide canvas.
+    Canvas is normalized [0,1] x [0,1].
+    """
+    b = e["bbox"]["norm"]
+    x1, y1 = b["x"], b["y"]
+    x2, y2 = b["x"] + b["w"], b["y"] + b["h"]
+
+    # intersection with [0,1]x[0,1]
+    ix1, iy1 = max(0.0, x1), max(0.0, y1)
+    ix2, iy2 = min(1.0, x2), min(1.0, y2)
+
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    area = max(1e-12, (x2 - x1) * (y2 - y1))
+    return inter / area
+
+
+def is_on_canvas(e, min_overlap: float = 0.90) -> bool:
+    """
+    Keep only elements where >= min_overlap of their area is inside the slide canvas.
+    min_overlap=0.90 means drop elements mostly outside.
+    """
+    return overlap_ratio_with_canvas(e) >= min_overlap
+
+
 #!/usr/bin/env python3
 """
 pptx_structured_extract.py
