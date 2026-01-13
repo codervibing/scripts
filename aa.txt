@@ -1,79 +1,218 @@
-chatbot-app/
-├── frontend/                     # UI (web/mobile)
-│   ├── public/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── pages/                # or routes/ if using Next.js/Remix
-│   │   ├── hooks/
-│   │   └── lib/                  # API clients, type defs
-│   └── package.json
-│
-├── backend/
-│   ├── app.py                    # entrypoint (FastAPI/Flask/etc.)
-│   ├── api/                      # HTTP endpoints
-│   │   ├── routes_chat.py        # /chat, /threads, /history
-│   │   ├── routes_admin.py
-│   │   └── deps.py               # shared dependencies (auth, db session)
-│   │
-│   ├── core/                     # cross-cutting concerns
-│   │   ├── config.py             # settings, env loading
-│   │   ├── logging.py
-│   │   ├── exceptions.py
-│   │   └── middleware.py
-│   │
-│   ├── domain/                   # business entities & logic
-│   │   ├── conversations/
-│   │   │   ├── models.py         # Conversation, Message, ToolCall
-│   │   │   └── service.py        # save/load history, transcripts
-│   │   ├── users/
-│   │   └── knowledge/            # documents / collections metadata
-│   │
-│   ├── services/                 # orchestration / high-level flows
-│   │   ├── chat_orchestrator.py  # routes requests to correct agent/pipeline
-│   │   ├── routing_policy.py     # which agent to call when
-│   │   ├── retrieval_service.py  # vector / keyword search abstraction
-│   │   └── analytics_service.py
-│   │
-│   ├── agents/                   # agent definitions (all API-driven)
-│   │   ├── base.py               # BaseAgent, common interface
-│   │   ├── rag_agent.py          # calls LLM + vector DB API
-│   │   ├── sql_agent.py          # calls SQL-proxy API / DB-tool
-│   │   ├── tools_agent.py        # web-search, calculators, etc.
-│   │   └── workflow/             # multi-step/graph agents
-│   │
-│   ├── clients/                  # outbound API clients
-│   │   ├── llm_client.py         # OpenAI/Anthropic/Mistral/etc.
-│   │   ├── embedding_client.py   # embedding/model APIs
-│   │   ├── vector_client.py      # Redis/Weaviate/Pinecone/etc.
-│   │   ├── tools_client.py       # external tools (search, emails, CRMs)
-│   │   └── db_client.py          # SQL/NoSQL if used directly
-│   │
-│   ├── prompts/                  # prompt + system templates
-│   │   ├── chat/
-│   │   ├── agents/
-│   │   └── tools/
-│   │
-│   ├── workers/                  # async/background tasks
-│   │   ├── queue.py              # celery/rq/kafka/other
-│   │   ├── tasks_ingestion.py    # doc ingestion, embedding jobs
-│   │   └── tasks_maintenance.py  # cleanup, metrics
-│   │
-│   ├── tests/
-│   │   ├── test_api/
-│   │   ├── test_agents/
-│   │   └── test_services/
-│   └── requirements.txt
-│
-├── configs/                      # per-env config (non-secret)
-│   ├── dev.yaml
-│   ├── staging.yaml
-│   └── prod.yaml
-│
-├── infra/                        # deployment / ops
-│   ├── docker/
-│   ├── k8s/
-│   └── scripts/
-│
-├── .env.example                  # example secrets layout
-├── README.md
-└── pyproject.toml / setup.cfg
+Email: PPT Extraction Quality Assessment for RAG Application
+
+Problem Statement
+We have a growing corpus (currently 50,000+ PowerPoint files) containing deal information for a RAG application. Text extraction follows creation order rather than visual reading order, causing:
+
+Incorrect context retrieval in RAG chunks
+Poor LLM answer quality
+Unreliable semantic search results
+
+Challenge: New PPTs are continuously added. We need an automated, scalable system to score extraction quality and ensure only high-quality documents enter the RAG pipeline.
+Current constraint: No LLM access for validation at this stage.
+
+Proposed Solution: Automated Quality Gate System
+Approach Overview
+Build a continuous quality assessment pipeline that scores each PPT upon ingestion and routes documents based on quality:
+
+High quality → Direct to RAG vector store
+Medium quality → Apply spatial re-ordering, then ingest
+Low quality → Flag for manual review or reject
+
+
+Quality Scoring Metrics (No LLM Required)
+1. Creation-Position Divergence (CPD) - Primary Metric
+
+Correlation between extraction order and expected spatial reading order
+Score range: 0-1 (higher = better)
+
+2. Spatial Sequence Score (SSS)
+
+Validates left-to-right, top-to-bottom extraction flow
+Score range: 0-1 (higher = better)
+
+3. Chunk Coherence Score (CCS) - Critical for RAG
+
+Measures if text chunks (as they'd appear in RAG) are semantically coherent
+Checks if consecutive extractions form complete thoughts
+Score range: 0-1 (higher = better)
+
+4. Information Density Score (IDS) - RAG-Specific
+
+Evaluates if key information (deal size, company, date) appears in logical proximity
+Uses named entity clustering
+Score range: 0-1 (higher = better)
+
+
+Composite Quality Score for RAG
+Formula:
+RAG_Quality_Score = 0.25×CPD + 0.20×SSS + 0.35×CCS + 0.20×IDS
+Note: Chunk Coherence weighted higher because RAG retrieval depends on meaningful text segments.
+
+Automated Pipeline Architecture
+Ingestion Flow
+New PPT arrives
+    ↓
+Extract text + coordinates
+    ↓
+Calculate Quality Score (< 1 second)
+    ↓
+    ├─ Score ≥ 0.75 → Direct to Vector Store
+    ├─ Score 0.50-0.74 → Apply Spatial Reordering → Vector Store
+    ├─ Score 0.30-0.49 → Flag for Review Queue
+    └─ Score < 0.30 → Reject + Alert
+Continuous Improvement Loop
+Every 1000 new PPTs:
+    ↓
+Sample 100 for validation
+    ↓
+Recalculate metric weights
+    ↓
+Update scoring model
+    ↓
+Re-score flagged PPTs in review queue
+
+RAG-Specific Considerations
+1. Chunking Strategy Impact
+Poor extraction order affects chunking:
+
+Bad: Title + Random Footer + Deal Details (incoherent chunk)
+Good: Title + Deal Details + Context (coherent chunk)
+
+Our scoring predicts chunk quality before chunking occurs.
+2. Retrieval Quality Prediction
+High-scoring PPTs will have:
+
+Better semantic search results (embeddings capture actual meaning)
+More accurate context windows for LLM
+Fewer hallucinations from fragmented information
+
+3. Vector Store Optimization
+Only ingest quality-scored content:
+
+Reduces vector store size (reject ~10-15% low-quality)
+Improves retrieval precision
+Lowers compute costs
+
+
+Implementation Plan
+Phase 1: Baseline System (Week 1-2)
+
+Build scoring engine for 4 core metrics
+Process existing 50k PPTs
+Generate quality distribution analysis
+Set initial thresholds (can adjust later)
+
+Phase 2: Pipeline Integration (Week 3)
+
+Integrate scoring into ingestion workflow
+Implement spatial re-ordering for medium-quality PPTs
+Set up review queue dashboard
+Configure automated alerts
+
+Phase 3: Validation & Tuning (Week 4)
+
+When LLM available: validate scoring vs RAG answer quality
+A/B test: RAG with all docs vs RAG with scored docs only
+Measure: retrieval precision, answer accuracy, hallucination rate
+Adjust thresholds and weights based on results
+
+Phase 4: Production & Monitoring (Ongoing)
+
+Deploy automated scoring for all new PPTs
+Weekly quality reports
+Monthly model retraining
+Quarterly metric weight optimization
+
+
+Success Metrics
+Immediate (Without LLM)
+
+% of PPTs passing quality threshold
+Score distribution over time
+Processing throughput (PPTs/hour)
+
+Post-LLM Validation
+
+RAG retrieval precision improvement: Target +25%
+Answer accuracy improvement: Target +30%
+Reduction in "no relevant context" responses: Target -40%
+Vector store size reduction: Target -15% (by excluding low-quality)
+
+
+Scalability Features
+1. Incremental Processing
+
+Score PPTs as they arrive (real-time)
+No need to reprocess entire corpus
+Sub-second scoring per document
+
+2. Distributed Scoring
+
+Parallel processing for batch uploads
+Can handle 10k+ PPTs/day
+
+3. Adaptive Thresholds
+
+System learns from growing corpus
+Auto-adjusts quality thresholds as patterns emerge
+
+4. Monitoring Dashboard
+
+Real-time quality trends
+Alert on quality degradation
+Track which PPT sources/templates score poorly
+
+
+Cost-Benefit Analysis
+Current State (No Quality Gate)
+
+50k PPTs → All ingested → Vector store size: X
+RAG retrieval accuracy: Baseline
+Manual troubleshooting of bad answers: High
+
+Proposed State (With Quality Gate)
+
+50k PPTs → ~85% high/medium quality → Vector store size: 0.85X
+RAG retrieval accuracy: Baseline + 25-30%
+Automated quality routing → Reduced manual intervention
+ROI: Better answers + lower compute costs + faster debugging
+
+
+Data Requirements
+For each PPT extraction, we need:
+
+Text content of each element
+Bounding box coordinates (x, y, width, height)
+Extraction sequence number
+PPT metadata (source, template type if available)
+
+Storage: ~5KB per PPT for scoring data = 250MB for 50k PPTs (minimal)
+
+Timeline
+
+Week 1-2: Build & test scoring system on existing 50k
+Week 3: Integrate into ingestion pipeline
+Week 4: Validate with LLM (when available)
+Week 5+: Production deployment with monitoring
+
+Go-live for automated scoring: 3-4 weeks
+
+Risks & Mitigation
+RiskImpactMitigationScoring false negatives (good PPTs scored low)Miss valuable dataManual review queue, threshold tuningScoring false positives (bad PPTs scored high)Poor RAG qualityLLM validation feedback loopProcessing bottleneck at scaleSlow ingestionDistributed processing, batchingMetric drift over timeDegraded accuracyMonthly retraining, monitoring alerts
+
+Next Steps
+
+Approve approach and quality gate thresholds
+Provide sample data: 100 PPTs with extraction output (text + coordinates)
+Run pilot: Score 500 PPTs, validate against manual review
+Review results: Adjust metrics/weights if needed
+Deploy: Full pipeline integration
+
+
+Questions for Discussion
+
+What's your current PPT ingestion rate? (daily/weekly volume)
+How are PPTs currently chunked for RAG? (chunk size, overlap)
+What's the current vector store size and retrieval latency?
+Are there known "problematic" PPT templates we should analyze?
+Do you have any existing quality metrics or manual QA process?
