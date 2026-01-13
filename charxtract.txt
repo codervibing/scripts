@@ -1,0 +1,2 @@
+Summary Table
+MetricFormula CoreRangeInterpretationCPDKendall's τ normalized[0,1]1 = perfect order matchSSS1 - (violations / pairs)[0,1]1 = perfect reading flowCCSWeighted avg of 4 sub-metrics[0,1]>0.7 = coherent chunksIDSEntity clustering + completeness[0,1]>0.7 = dense information
