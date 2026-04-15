@@ -1,5 +1,95 @@
-Metric,Formula Core,Range,Interpretation
-CPD,Kendall's τ normalized,[0,1],1 = perfect order match
-SSS,1 - (violations / pairs),[0,1],1 = perfect reading flow
-CCS,Weighted avg of 4 sub-metrics,[0,1],>0.7 = coherent chunks
-IDS,Entity clustering + completeness,[0,1],>0.7 = dense information
+You are a senior AI engineer conducting a deep architectural review of this repository.
+
+Your goal is to analyse the entire codebase and produce a concrete implementation plan for 
+chat history management — covering persistence, multi-user session isolation, 
+retrieval/search over history, and token/context window management during inference.
+
+---
+
+## STEP 1 — CODEBASE AUDIT
+
+Before recommending anything, scan the repo and answer:
+
+1. Where is inference called? (identify all LLM call sites — model invocations, prompt 
+   construction, message array assembly)
+2. Is there any existing history/session/memory handling? If so, where and how?
+3. What storage layers already exist? (DB, cache, file system, vector store, etc.)
+4. How are users/sessions currently identified or scoped?
+5. What frameworks/libraries are in use? (LangChain, LlamaIndex, raw API calls, etc.)
+
+Only proceed once you have mapped these. Show your findings before making recommendations.
+
+---
+
+## STEP 2 — ARCHITECTURE RECOMMENDATION
+
+Based on what you find, recommend a chat history implementation covering all four areas:
+
+### A. Persistence
+- What storage backend fits this codebase? (SQL, NoSQL, Redis, vector DB, or hybrid)
+- Schema or data model for storing messages (role, content, timestamp, tokens, 
+  session_id, user_id, metadata)
+- Write path: when and how messages get saved (pre-inference, post-inference, or both)
+- Read path: how history is loaded at the start of each turn
+
+### B. Multi-User / Session Isolation
+- How session IDs should be generated and scoped
+- How to prevent cross-user history leakage
+- Session lifecycle: creation, TTL, expiry, deletion
+- Where session resolution sits in the request flow (middleware, service layer, etc.)
+
+### C. Retrieval / Search Over History
+- Whether semantic search (vector embeddings) is warranted, or if recency/keyword 
+  filtering is sufficient for this codebase
+- If vector search: which store fits (pgvector, Pinecone, Chroma, Weaviate, etc.), 
+  what gets embedded (full messages vs. summaries), and when embeddings are generated
+- Query strategy: how past context is retrieved and injected per inference call
+- Relevance scoring and ranking approach
+
+### D. Token / Context Window Management
+- How to count tokens accurately for this model (identify the tokeniser)
+- Strategy for fitting history into the context window:
+    - Sliding window (last N messages)
+    - Summarisation of older turns
+    - Retrieval-augmented injection (top-K relevant messages only)
+    - Hybrid (recent turns + retrieved relevant turns + rolling summary)
+- Where this trimming/selection logic should live relative to the inference call
+- How to handle system prompt + history + new user message budget allocation
+
+---
+
+## STEP 3 — IMPLEMENTATION PLAN
+
+Produce a prioritised, phased plan:
+
+- Phase 1: Minimum viable history (what to build first to unblock usability)
+- Phase 2: Isolation and persistence hardening
+- Phase 3: Retrieval and smart context window management
+- Phase 4: Observability (logging token usage, history hit rate, session metrics)
+
+For each phase, list:
+- Exact files to create or modify
+- New dependencies to add (with justification)
+- Any breaking changes or migration steps needed
+
+---
+
+## STEP 4 — SHOW CODE
+
+For each recommendation, show the actual implementation alongside the existing code 
+patterns in this repo. Match the existing style, language, and conventions — do not 
+introduce patterns that are inconsistent with what is already here.
+
+Flag any areas where the current architecture will need to be refactored to accommodate 
+history management cleanly.
+
+---
+
+## CONSTRAINTS
+
+- Do not hallucinate files or functions. Only reference things you can see in the repo.
+- If something is ambiguous or missing, say so explicitly and ask before assuming.
+- Prefer surgical, incremental changes over wholesale rewrites unless a rewrite is 
+  clearly justified.
+- All recommendations must be production-aware: thread safety, concurrency, error 
+  handling, and scalability under multi-user load.
